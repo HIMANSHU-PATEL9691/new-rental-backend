@@ -160,6 +160,9 @@ exports.updateRental = async (req, res) => {
     if (updates.securityReturnedAt) {
       updates.securityReturnedAt = new Date(updates.securityReturnedAt);
     }
+    if (updates.returnedAt) {
+      updates.returnedAt = new Date(updates.returnedAt);
+    }
 
     console.info('[rentals] update request', {
       id: req.params.id,
@@ -168,13 +171,16 @@ exports.updateRental = async (req, res) => {
     });
 
     const allowedEmployeeUpdates = ['remarkCompleted', 'remarkConfirmedBy', 'drycleanCompleted', 'drycleanCompletedBy'];
+    const allowedEmployeeDeliveryUpdates = ['status', 'advance', 'securityReturned', 'securityReturnedAt', 'returnedAt'];
     const isReadyUpdate = updateKeys.length > 0 && updateKeys.every(update => allowedEmployeeUpdates.includes(update));
+    const isDeliveryUpdate = updateKeys.length > 0 && updateKeys.every(update =>
+      [...allowedEmployeeUpdates, ...allowedEmployeeDeliveryUpdates].includes(update)
+    );
 
-    if (userRole === 'employee' || isReadyUpdate) {
-      if (!isReadyUpdate) {
-        return res.status(403).json({ error: 'Employees can only mark rentals as ready or mark dryclean complete.' });
+    if (userRole === 'employee') {
+      if (!isReadyUpdate && !isDeliveryUpdate) {
+        return res.status(403).json({ error: 'Employees can only update rental readiness, dryclean completion, or delivery/return status.' });
       }
-      // Require appropriate name fields for corresponding actions
       if (updates.remarkCompleted === true && !updates.remarkConfirmedBy) {
         return res.status(400).json({ error: 'Employee name is required to mark a rental as ready.' });
       }

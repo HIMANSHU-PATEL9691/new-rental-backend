@@ -7,9 +7,19 @@ module.exports = function requireAdmin(req, res, next) {
     const isEmployeeReadyUpdate =
       role === 'employee' &&
       req.method === 'PATCH' &&
-      req.originalUrl.includes('/api/rentals/') &&
+      req.originalUrl.startsWith('/api/rentals') &&
       updateKeys.length > 0 &&
       updateKeys.every(key => ['remarkCompleted', 'remarkConfirmedBy'].includes(key));
+
+    const isEmployeeRentalUpdate =
+      role === 'employee' &&
+      req.method === 'PATCH' &&
+      req.originalUrl.startsWith('/api/rentals');
+      
+    const canUserAddInventory =
+      ['employee', 'reception'].includes(role) &&
+      req.method === 'POST' &&
+      req.originalUrl.startsWith('/api/items');
 
     console.info('[auth] requireAdmin check', {
       method: req.method,
@@ -17,9 +27,11 @@ module.exports = function requireAdmin(req, res, next) {
       role: role || '(missing)',
       updateKeys,
       isEmployeeReadyUpdate,
+      isEmployeeRentalUpdate,
+      canUserAddInventory,
     });
 
-    if (isEmployeeReadyUpdate) {
+    if (isEmployeeReadyUpdate || isEmployeeRentalUpdate || canUserAddInventory) {
       return next();
     }
 
@@ -32,4 +44,3 @@ module.exports = function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Admin only' });
   }
 };
-
