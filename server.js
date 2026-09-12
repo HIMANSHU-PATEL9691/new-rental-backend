@@ -25,8 +25,8 @@ app.use(cors({
   origin: true, // Dynamically reflects your frontend origin (fixes port mismatches like 5174)
   credentials: true,
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(uploadsDir, {
   setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');

@@ -158,7 +158,9 @@ exports.uploadImage = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file uploaded' });
     }
-    const imageUrl = `/uploads/items/${req.file.filename}`;
+    const mimeType = req.file.mimetype || 'image/jpeg';
+    const base64Data = req.file.buffer.toString('base64');
+    const imageUrl = `data:${mimeType};base64,${base64Data}`;
     res.status(200).json({ url: imageUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
