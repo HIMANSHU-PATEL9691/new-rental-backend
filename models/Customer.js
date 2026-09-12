@@ -15,7 +15,8 @@ const customerSchema = new mongoose.Schema({
   },
   totalSpent: { type: Number, default: 0 },
   rentals: { type: Number, default: 0 },
-  joined: { type: Date, default: Date.now }
+  joined: { type: Date, default: Date.now },
+  branch: { type: String, default: 'Shop 1', index: true }
 }, {
   timestamps: true
 });

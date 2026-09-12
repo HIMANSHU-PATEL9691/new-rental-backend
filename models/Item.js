@@ -19,7 +19,8 @@ const itemSchema = new mongoose.Schema({
     default: ItemStatus.AVAILABLE 
   },
   image: { type: String, default: '' },
-  timesRented: { type: Number, default: 0 }
+  timesRented: { type: Number, default: 0 },
+  branch: { type: String, default: 'Shop 1', index: true }
 }, {
   timestamps: true
 });

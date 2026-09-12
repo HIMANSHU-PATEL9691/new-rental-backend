@@ -21,9 +21,13 @@ const userSchema = new mongoose.Schema(
       default: 'pending',
       index: true,
     },
+
+    branch: {
+      type: String,
+      default: 'Shop 1',
+    },
   },
   { timestamps: true }
 );
 
 module.exports = mongoose.model('User', userSchema);
-

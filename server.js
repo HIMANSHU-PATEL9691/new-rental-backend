@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 dotenv.config();
 
@@ -12,6 +14,12 @@ const PORT = process.env.PORT || 3001;
 let dbReady = false;
 let dbError = null;
 
+// Ensure uploads directory exists and serve static uploads
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 // Middleware
 app.use(cors({
   origin: true, // Dynamically reflects your frontend origin (fixes port mismatches like 5174)
@@ -19,6 +27,13 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+}));
 
 // Home Route
 app.get("/", (req, res) => {
@@ -93,6 +108,23 @@ app.listen(PORT, () => {
 });
 
 // MongoDB Connect
+const Item = require('./models/Item');
+const Customer = require('./models/Customer');
+const Rental = require('./models/Rental');
+const User = require('./models/User');
+
+async function migrateBranchData() {
+  try {
+    await Item.updateMany({ $or: [{ branch: { $exists: false } }, { branch: null }, { branch: '' }] }, { $set: { branch: 'Shop 1' } });
+    await Customer.updateMany({ $or: [{ branch: { $exists: false } }, { branch: null }, { branch: '' }] }, { $set: { branch: 'Shop 1' } });
+    await Rental.updateMany({ $or: [{ branch: { $exists: false } }, { branch: null }, { branch: '' }] }, { $set: { branch: 'Shop 1' } });
+    await User.updateMany({ $or: [{ branch: { $exists: false } }, { branch: null }, { branch: '' }] }, { $set: { branch: 'Shop 1' } });
+    console.log('[DB] Multi-branch migration complete. Existing records assigned to Shop 1.');
+  } catch (err) {
+    console.error('[DB] Migration error:', err.message);
+  }
+}
+
 if (!process.env.MONGODB_URI) {
   dbReady = false;
   dbError = 'MONGODB_URI is missing in .env file';
@@ -103,6 +135,7 @@ if (!process.env.MONGODB_URI) {
       dbReady = true;
       dbError = null;
       console.log('Connected to MongoDB Atlas');
+      migrateBranchData();
     })
     .catch((err) => {
       dbReady = false;

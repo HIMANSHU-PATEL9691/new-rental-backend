@@ -3,7 +3,14 @@ const Customer = require('../models/Customer');
 // GET /api/customers
 exports.getCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find().sort({ createdAt: -1 });
+    const targetBranch = req.query.branch || 'Shop 1';
+    const filter = {};
+    if (targetBranch === 'Shop 1') {
+      filter.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
+    } else {
+      filter.branch = targetBranch;
+    }
+    const customers = await Customer.find(filter).sort({ createdAt: -1 });
     res.json(customers);
   } catch (err) {
     res.status(500).json({ error: err.message });

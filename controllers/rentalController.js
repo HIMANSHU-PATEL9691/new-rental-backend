@@ -6,7 +6,14 @@ const { RentalStatus, ItemStatus } = require('../types');
 // GET /api/rentals
 exports.getRentals = async (req, res) => {
   try {
-    const rentals = await Rental.find().populate('item customer').sort({ createdAt: -1 });
+    const targetBranch = req.query.branch || 'Shop 1';
+    const filter = {};
+    if (targetBranch === 'Shop 1') {
+      filter.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
+    } else {
+      filter.branch = targetBranch;
+    }
+    const rentals = await Rental.find(filter).populate('item customer').sort({ createdAt: -1 });
     res.json(rentals);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -51,6 +58,7 @@ exports.createRental = async (req, res) => {
       signature = '',
       total,
       status,
+      branch = 'Shop 1',
     } = req.body;
 
     // Frontend sends lowercase statuses; normalize defensively.
@@ -71,6 +79,7 @@ exports.createRental = async (req, res) => {
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
     const rental = new Rental({
+      branch: branch || 'Shop 1',
       item: item._id,
       customer: customer._id,
       billNo,

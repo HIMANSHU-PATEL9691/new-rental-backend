@@ -44,7 +44,8 @@ const rentalSchema = new mongoose.Schema({
     type: String, 
     enum: Object.values(RentalStatus),
     default: RentalStatus.UPCOMING 
-  }
+  },
+  branch: { type: String, default: 'Shop 1', index: true }
 }, {
   timestamps: true
 });

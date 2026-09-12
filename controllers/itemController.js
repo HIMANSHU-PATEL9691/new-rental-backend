@@ -2,11 +2,20 @@ const Item = require('../models/Item');
 const { ItemStatus } = require('../types');
 const XLSX = require('xlsx');
 
-// GET /api/items - list all or filter by status
+// GET /api/items - list all or filter by status & branch
 exports.getItems = async (req, res) => {
   try {
-    const { status } = req.query;
-    const query = status ? { status } : {};
+    const { status, branch } = req.query;
+    const query = {};
+    if (status) query.status = status;
+    
+    const targetBranch = branch || 'Shop 1';
+    if (targetBranch === 'Shop 1') {
+      query.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
+    } else {
+      query.branch = targetBranch;
+    }
+
     const items = await Item.find(query).sort({ createdAt: -1 });
     res.json(items);
   } catch (err) {
@@ -71,7 +80,6 @@ exports.uploadExcel = async (req, res) => {
 
     let jsonData;
     if (req.file.mimetype === 'text/csv' || req.file.originalname.endsWith('.csv')) {
-      // Handle CSV files
       const csvText = req.file.buffer.toString('utf-8');
       const lines = csvText.split('\n').filter(line => line.trim());
       if (lines.length === 0) {
@@ -87,7 +95,6 @@ exports.uploadExcel = async (req, res) => {
         return obj;
       });
     } else {
-      // Handle Excel files
       const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
@@ -115,11 +122,11 @@ exports.uploadExcel = async (req, res) => {
           retailValue: parseFloat(row.retailValue || row['Retail Value'] || row.retail_value),
           quantity: Math.max(0, parseInt(row.quantity || row.Quantity || row.qty || row.Qty || 1, 10) || 1),
           image: row.image || row.Image || '',
+          branch: req.body.branch || row.branch || row.Branch || 'Shop 1',
           status: ItemStatus.AVAILABLE,
           timesRented: 0
         };
 
-        // Validate required fields
         if (!itemData.name || !itemData.designer || !itemData.category || 
             !itemData.subcategory || !itemData.size || !itemData.color ||
             isNaN(itemData.pricePerDay) || isNaN(itemData.retailValue)) {
@@ -140,6 +147,19 @@ exports.uploadExcel = async (req, res) => {
       items: items.map(item => ({ id: item.customId, name: item.name })),
       errors: errors.length > 0 ? errors : undefined
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /api/items/upload-image
+exports.uploadImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded' });
+    }
+    const imageUrl = `/uploads/items/${req.file.filename}`;
+    res.status(200).json({ url: imageUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
