@@ -37,6 +37,7 @@ exports.signup = async (req, res) => {
       phone: normalizedPhone,
       email: email ? String(email).trim().toLowerCase() : undefined,
       passwordHash,
+      rawPassword: String(password),
       role: ['admin', 'reception'].includes(role) ? role : 'employee',
       status: status === 'active' ? 'active' : 'pending',
       branch: branch || 'Shop 1',
@@ -52,6 +53,7 @@ exports.signup = async (req, res) => {
       phone: user.phone,
       email: user.email,
       branch: user.branch || 'Shop 1',
+      rawPassword: user.rawPassword,
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -87,8 +89,19 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials or account not found.' });
     }
 
-    if (branch && branch !== user.branch) {
-      user.branch = branch;
+    // Check if staff tries to access a different shop than assigned
+    if (user.role !== 'admin' && branch && user.branch && branch !== user.branch) {
+      return res.status(403).json({
+        error: 'Correct the shop name. You are not able to access the other shop.'
+      });
+    }
+
+    let needsSave = false;
+    if (!user.rawPassword && password) {
+      user.rawPassword = String(password);
+      needsSave = true;
+    }
+    if (needsSave) {
       await user.save();
     }
 
@@ -109,8 +122,16 @@ exports.login = async (req, res) => {
 // GET /api/users
 exports.getUsers = async (req, res) => {
   try {
-    // Fetch all users, excluding their password hashes for security
-    const users = await User.find({}, { passwordHash: 0 });
+    const { branch } = req.query;
+    const query = {};
+    if (branch) {
+      if (branch === 'Shop 1') {
+        query.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
+      } else {
+        query.branch = branch;
+      }
+    }
+    const users = await User.find(query, { passwordHash: 0 }).sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -135,6 +156,39 @@ exports.updateUserStatus = async (req, res) => {
     }
 
     res.json({ message: 'Status updated successfully', user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// PUT /api/users/:identifier/password
+exports.updateUserPassword = async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const { password } = req.body;
+
+    if (!password || !String(password).trim()) {
+      return res.status(400).json({ error: 'New password is required' });
+    }
+
+    const query = identifier.match(/^[0-9a-fA-F]{24}$/)
+      ? { _id: identifier }
+      : { $or: [{ phone: normalizePhone(identifier) }, { email: String(identifier).trim().toLowerCase() }] };
+
+    const newPasswordStr = String(password).trim();
+    const passwordHash = await bcrypt.hash(newPasswordStr, 10);
+
+    const user = await User.findOneAndUpdate(
+      query,
+      { passwordHash, rawPassword: newPasswordStr },
+      { new: true, select: '-passwordHash' }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ message: 'Password updated successfully', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

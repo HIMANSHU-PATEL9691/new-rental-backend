@@ -9,7 +9,7 @@ module.exports = function requireAdmin(req, res, next) {
       req.method === 'PATCH' &&
       req.originalUrl.startsWith('/api/rentals') &&
       updateKeys.length > 0 &&
-      updateKeys.every(key => ['remarkCompleted', 'remarkConfirmedBy'].includes(key));
+      updateKeys.every(key => ['remarkCompleted', 'remarkConfirmedBy', 'fittingCompleted', 'fittingCompletedBy', 'drycleanCompleted', 'drycleanCompletedBy'].includes(key));
 
     const isEmployeeRentalUpdate =
       role === 'employee' &&

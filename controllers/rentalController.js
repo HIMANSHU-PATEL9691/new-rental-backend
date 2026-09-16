@@ -136,6 +136,9 @@ exports.updateRental = async (req, res) => {
     if (typeof updates.remarkConfirmedBy === 'string') {
       updates.remarkConfirmedBy = updates.remarkConfirmedBy.trim();
     }
+    if (typeof updates.fittingCompletedBy === 'string') {
+      updates.fittingCompletedBy = updates.fittingCompletedBy.trim();
+    }
     if (typeof updates.drycleanCompletedBy === 'string') {
       updates.drycleanCompletedBy = updates.drycleanCompletedBy.trim();
     }
@@ -147,6 +150,9 @@ exports.updateRental = async (req, res) => {
     }
     if (updates.remarkCompleted != null) {
       updates.remarkCompleted = Boolean(updates.remarkCompleted);
+    }
+    if (updates.fittingCompleted != null) {
+      updates.fittingCompleted = Boolean(updates.fittingCompleted);
     }
     if (updates.drycleanCompleted != null) {
       updates.drycleanCompleted = Boolean(updates.drycleanCompleted);
@@ -179,7 +185,7 @@ exports.updateRental = async (req, res) => {
       updateKeys,
     });
 
-    const allowedEmployeeUpdates = ['remarkCompleted', 'remarkConfirmedBy', 'drycleanCompleted', 'drycleanCompletedBy'];
+    const allowedEmployeeUpdates = ['remarkCompleted', 'remarkConfirmedBy', 'fittingCompleted', 'fittingCompletedBy', 'drycleanCompleted', 'drycleanCompletedBy'];
     const allowedEmployeeDeliveryUpdates = ['status', 'advance', 'securityReturned', 'securityReturnedAt', 'returnedAt'];
     const isReadyUpdate = updateKeys.length > 0 && updateKeys.every(update => allowedEmployeeUpdates.includes(update));
     const isDeliveryUpdate = updateKeys.length > 0 && updateKeys.every(update =>
@@ -188,10 +194,13 @@ exports.updateRental = async (req, res) => {
 
     if (userRole === 'employee') {
       if (!isReadyUpdate && !isDeliveryUpdate) {
-        return res.status(403).json({ error: 'Employees can only update rental readiness, dryclean completion, or delivery/return status.' });
+        return res.status(403).json({ error: 'Employees can only update rental readiness, fitting completion, dryclean completion, or delivery/return status.' });
       }
       if (updates.remarkCompleted === true && !updates.remarkConfirmedBy) {
         return res.status(400).json({ error: 'Employee name is required to mark a rental as ready.' });
+      }
+      if (updates.fittingCompleted === true && !updates.fittingCompletedBy) {
+        return res.status(400).json({ error: 'Employee name is required to mark fitting as completed.' });
       }
       if (updates.drycleanCompleted === true && !updates.drycleanCompletedBy) {
         return res.status(400).json({ error: 'Employee name is required to mark dryclean as completed.' });

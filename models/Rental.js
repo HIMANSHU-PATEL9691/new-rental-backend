@@ -22,6 +22,8 @@ const rentalSchema = new mongoose.Schema({
   remark: { type: String, default: '' },
   remarkCompleted: { type: Boolean, default: false },
   remarkConfirmedBy: { type: String, default: '' },
+  fittingCompleted: { type: Boolean, default: false },
+  fittingCompletedBy: { type: String, default: '' },
   // Dryclean workflow
   drycleanCompleted: { type: Boolean, default: false },
   drycleanCompletedBy: { type: String, default: '' },

@@ -70,6 +70,7 @@ const authController = require('./controllers/authController');
 // Staff management endpoints
 app.get('/api/auth/users', authController.getUsers);
 app.put('/api/auth/users/:identifier/status', authController.updateUserStatus);
+app.put('/api/auth/users/:identifier/password', authController.updateUserPassword);
 app.delete('/api/auth/users/:identifier', authController.deleteUser);
 
 // Auth routes
