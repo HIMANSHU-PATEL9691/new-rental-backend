@@ -52,6 +52,10 @@ const rentalSchema = new mongoose.Schema({
   timestamps: true
 });
 
+rentalSchema.index({ branch: 1, createdAt: -1 });
+rentalSchema.index({ startDate: 1, endDate: 1 });
+rentalSchema.index({ status: 1 });
+
 rentalSchema.pre('validate', async function(next) {
   if (!this.customId) {
     const seq = await getNextSequence('R');

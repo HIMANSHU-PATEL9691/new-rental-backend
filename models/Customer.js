@@ -21,6 +21,8 @@ const customerSchema = new mongoose.Schema({
   timestamps: true
 });
 
+customerSchema.index({ branch: 1, createdAt: -1 });
+
 customerSchema.pre('validate', async function(next) {
   if (!this.customId) {
     const seq = await getNextSequence('C');

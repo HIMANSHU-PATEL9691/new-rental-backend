@@ -13,7 +13,11 @@ exports.getRentals = async (req, res) => {
     } else {
       filter.branch = targetBranch;
     }
-    const rentals = await Rental.find(filter).populate('item customer').sort({ createdAt: -1 });
+    const rentals = await Rental.find(filter)
+      .populate('item', 'customId name designer category subcategory size color pricePerDay quantity status image branch')
+      .populate('customer', 'customId name phone email tier branch')
+      .sort({ createdAt: -1 })
+      .lean();
     res.json(rentals);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -23,7 +27,10 @@ exports.getRentals = async (req, res) => {
 // GET /api/rentals/:id
 exports.getRental = async (req, res) => {
   try {
-    const rental = await Rental.findOne({ customId: req.params.id }).populate('item customer');
+    const rental = await Rental.findOne({ customId: req.params.id })
+      .populate('item', 'customId name designer category subcategory size color pricePerDay quantity status image branch')
+      .populate('customer', 'customId name phone email tier branch')
+      .lean();
     if (!rental) return res.status(404).json({ error: 'Rental not found' });
     res.json(rental);
   } catch (err) {

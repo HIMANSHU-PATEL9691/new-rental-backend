@@ -10,7 +10,7 @@ exports.getCustomers = async (req, res) => {
     } else {
       filter.branch = targetBranch;
     }
-    const customers = await Customer.find(filter).sort({ createdAt: -1 });
+    const customers = await Customer.find(filter).sort({ createdAt: -1 }).lean();
     res.json(customers);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -20,7 +20,7 @@ exports.getCustomers = async (req, res) => {
 // GET /api/customers/:id
 exports.getCustomer = async (req, res) => {
   try {
-    const customer = await Customer.findOne({ customId: req.params.id });
+    const customer = await Customer.findOne({ customId: req.params.id }).lean();
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
     res.json(customer);
   } catch (err) {

@@ -2,6 +2,7 @@ const Item = require('../models/Item');
 const { ItemStatus } = require('../types');
 const XLSX = require('xlsx');
 
+
 // GET /api/items - list all or filter by status & branch
 exports.getItems = async (req, res) => {
   try {
@@ -16,7 +17,7 @@ exports.getItems = async (req, res) => {
       query.branch = targetBranch;
     }
 
-    const items = await Item.find(query).sort({ createdAt: -1 });
+    const items = await Item.find(query).sort({ createdAt: -1 }).lean();
     res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -26,7 +27,7 @@ exports.getItems = async (req, res) => {
 // GET /api/items/:id
 exports.getItem = async (req, res) => {
   try {
-    const item = await Item.findOne({ customId: req.params.id });
+    const item = await Item.findOne({ customId: req.params.id }).lean();
     if (!item) return res.status(404).json({ error: 'Item not found' });
     res.json(item);
   } catch (err) {
@@ -34,10 +35,12 @@ exports.getItem = async (req, res) => {
   }
 };
 
-// POST /api/items
+// POST /api/items — image (base64 data URI) stored directly in MongoDB
 exports.createItem = async (req, res) => {
   try {
-    const item = new Item(req.body);
+    const itemData = { ...req.body };
+    // Base64 image is stored as-is in the database (no file system)
+    const item = new Item(itemData);
     await item.save();
     res.status(201).json(item);
   } catch (err) {
@@ -45,12 +48,14 @@ exports.createItem = async (req, res) => {
   }
 };
 
-// PATCH /api/items/:id
+// PATCH /api/items/:id — image (base64 data URI) updated directly in MongoDB
 exports.updateItem = async (req, res) => {
   try {
+    const updateData = { ...req.body };
+    // Base64 image is stored as-is in the database (no file system)
     const item = await Item.findOneAndUpdate(
       { customId: req.params.id },
-      req.body,
+      updateData,
       { new: true }
     );
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -153,16 +158,22 @@ exports.uploadExcel = async (req, res) => {
 };
 
 // POST /api/items/upload-image
+// Converts uploaded file to base64 data URI and returns it.
+// No file is written to disk — the frontend sends this base64 back when saving the item,
+// and it is stored directly in MongoDB.
 exports.uploadImage = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file uploaded' });
     }
+
     const mimeType = req.file.mimetype || 'image/jpeg';
-    const base64Data = req.file.buffer.toString('base64');
-    const imageUrl = `data:${mimeType};base64,${base64Data}`;
-    res.status(200).json({ url: imageUrl });
+    const base64 = req.file.buffer.toString('base64');
+    const dataUri = `data:${mimeType};base64,${base64}`;
+
+    res.status(200).json({ url: dataUri });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+

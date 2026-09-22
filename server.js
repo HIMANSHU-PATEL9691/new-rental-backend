@@ -20,7 +20,10 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+const compression = require('compression');
+
 // Middleware
+app.use(compression());
 app.use(cors({
   origin: true, // Dynamically reflects your frontend origin (fixes port mismatches like 5174)
   credentials: true,
@@ -28,10 +31,12 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use('/uploads', express.static(uploadsDir, {
+  maxAge: '1d',
   setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
   }
 }));
 
@@ -126,6 +131,40 @@ async function migrateBranchData() {
   }
 }
 
+// Migrate existing file-path images (/uploads/items/xxx.jpg) to base64 in MongoDB.
+// This runs once on server start to move images from filesystem to database.
+async function migrateFilesToBase64() {
+  try {
+    const items = await Item.find({ image: { $regex: '^/uploads/items/' } });
+    if (items.length === 0) {
+      console.log('[DB] No file-path images to migrate.');
+      return;
+    }
+    let migrated = 0;
+    for (const item of items) {
+      try {
+        const filePath = path.join(__dirname, item.image);
+        if (!fs.existsSync(filePath)) {
+          console.warn(`[DB] Image file not found, skipping: ${filePath}`);
+          continue;
+        }
+        const buffer = fs.readFileSync(filePath);
+        const ext = path.extname(item.image).replace('.', '').toLowerCase();
+        const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        const base64 = buffer.toString('base64');
+        item.image = `data:${mimeType};base64,${base64}`;
+        await item.save();
+        migrated++;
+      } catch (fileErr) {
+        console.error(`[DB] Failed to migrate image for item ${item.customId}:`, fileErr.message);
+      }
+    }
+    console.log(`[DB] Migrated ${migrated}/${items.length} file-path images to base64 in MongoDB.`);
+  } catch (err) {
+    console.error('[DB] Image migration error:', err.message);
+  }
+}
+
 if (!process.env.MONGODB_URI) {
   dbReady = false;
   dbError = 'MONGODB_URI is missing in .env file';
@@ -137,6 +176,7 @@ if (!process.env.MONGODB_URI) {
       dbError = null;
       console.log('Connected to MongoDB Atlas');
       migrateBranchData();
+      migrateFilesToBase64();
     })
     .catch((err) => {
       dbReady = false;
