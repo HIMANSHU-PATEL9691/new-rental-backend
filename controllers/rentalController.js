@@ -80,10 +80,32 @@ exports.createRental = async (req, res) => {
 
     // Validate references
     const item = await Item.findOne({ customId: itemId });
-    if (!item) return res.status(404).json({ error: 'Item not found' });
+    if (!item) {
+      return res.status(404).json({ error: `Item "${itemId}" is not present in inventory. Cannot make bill.` });
+    }
 
     const customer = await Customer.findOne({ customId: customerId });
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    // Validate that item is not already booked for overlapping dates (unless Safa with stock)
+    const isSafa = [item.name, item.category, item.subcategory].filter(Boolean).join(' ').toLowerCase().includes('safa');
+    if (!isSafa) {
+      const rentalStart = new Date(deliveryDate || startDate);
+      const rentalEnd = new Date(endDate);
+      const overlap = await Rental.findOne({
+        item: item._id,
+        status: { $in: [RentalStatus.ACTIVE, RentalStatus.UPCOMING, RentalStatus.OVERDUE] },
+        $or: [
+          { startDate: { $lte: rentalEnd }, endDate: { $gte: rentalStart } },
+          { deliveryDate: { $lte: rentalEnd }, endDate: { $gte: rentalStart } },
+        ],
+      });
+      if (overlap) {
+        return res.status(400).json({
+          error: `Item "${item.name}" is already booked for the selected dates.`,
+        });
+      }
+    }
 
     const rental = new Rental({
       branch: branch || 'Shop 1',
