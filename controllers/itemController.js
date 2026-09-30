@@ -3,14 +3,30 @@ const { ItemStatus } = require('../types');
 const XLSX = require('xlsx');
 
 
+let itemsCache = null;
+let itemsCacheTime = 0;
+const CACHE_TTL = 60 * 1000; // 60 seconds TTL
+
+function invalidateItemsCache() {
+  itemsCache = null;
+  itemsCacheTime = 0;
+}
+exports.invalidateItemsCache = invalidateItemsCache;
+
 // GET /api/items - list all or filter by status & branch
 exports.getItems = async (req, res) => {
   try {
     const { status, branch } = req.query;
+    const targetBranch = branch || 'Shop 1';
+    const cacheKey = `${targetBranch}_${status || 'all'}`;
+
+    if (itemsCache && itemsCache[cacheKey] && (Date.now() - itemsCacheTime < CACHE_TTL)) {
+      return res.json(itemsCache[cacheKey]);
+    }
+
     const query = {};
     if (status) query.status = status;
     
-    const targetBranch = branch || 'Shop 1';
     if (targetBranch === 'Shop 1') {
       query.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
     } else {
@@ -18,6 +34,10 @@ exports.getItems = async (req, res) => {
     }
 
     const items = await Item.find(query).sort({ createdAt: -1 }).lean();
+    if (!itemsCache) itemsCache = {};
+    itemsCache[cacheKey] = items;
+    itemsCacheTime = Date.now();
+
     res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -42,6 +62,7 @@ exports.createItem = async (req, res) => {
     // Base64 image is stored as-is in the database (no file system)
     const item = new Item(itemData);
     await item.save();
+    invalidateItemsCache();
     res.status(201).json(item);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -59,6 +80,7 @@ exports.updateItem = async (req, res) => {
       { new: true }
     );
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    invalidateItemsCache();
     res.json(item);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -70,6 +92,7 @@ exports.deleteItem = async (req, res) => {
   try {
     const item = await Item.findOneAndDelete({ customId: req.params.id });
     if (!item) return res.status(404).json({ error: 'Item not found' });
+    invalidateItemsCache();
     res.json({ message: 'Item deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -147,6 +170,7 @@ exports.uploadExcel = async (req, res) => {
       }
     }
 
+    invalidateItemsCache();
     res.status(201).json({
       message: `Successfully uploaded ${items.length} items`,
       items: items.map(item => ({ id: item.customId, name: item.name })),

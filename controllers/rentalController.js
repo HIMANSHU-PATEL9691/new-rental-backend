@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Rental = require('../models/Rental');
 const Item = require('../models/Item');
 const Customer = require('../models/Customer');
@@ -262,13 +263,80 @@ exports.updateRental = async (req, res) => {
 
     const oldStatus = rental.status;
     const oldPenalty = rental.penalty || 0;
+    const oldItemDoc = rental.item;
+
+    // Resolve Item reference when itemId or itemNo is updated
+    let newItem = null;
+    const rawItemCode = (updates.itemId || updates.itemNo || '').toString().trim();
+    if (rawItemCode) {
+      newItem = await Item.findOne({ customId: new RegExp(`^${rawItemCode}$`, 'i') });
+      if (!newItem && mongoose.Types.ObjectId.isValid(rawItemCode)) {
+        newItem = await Item.findById(rawItemCode);
+      }
+      if (!newItem) {
+        newItem = await Item.findOne({ barcode: rawItemCode });
+      }
+      if (!newItem && updates.itemNo) {
+        const altCode = String(updates.itemNo).trim();
+        newItem = await Item.findOne({ customId: new RegExp(`^${altCode}$`, 'i') });
+        if (!newItem && mongoose.Types.ObjectId.isValid(altCode)) {
+          newItem = await Item.findById(altCode);
+        }
+      }
+    }
+
+    if (newItem) {
+      rental.item = newItem._id;
+      rental.itemNo = updates.itemNo || newItem.customId;
+    } else if (updates.itemNo) {
+      rental.itemNo = updates.itemNo;
+    }
+
+    // Resolve Customer reference when customerId is updated
+    if (updates.customerId) {
+      const rawCustCode = String(updates.customerId).trim();
+      let newCustomer = await Customer.findOne({ customId: new RegExp(`^${rawCustCode}$`, 'i') });
+      if (!newCustomer && mongoose.Types.ObjectId.isValid(rawCustCode)) {
+        newCustomer = await Customer.findById(rawCustCode);
+      }
+      if (newCustomer) {
+        rental.customer = newCustomer._id;
+      }
+    }
+
+    // Remove virtual non-schema keys so Object.assign does not corrupt document
+    delete updates.itemId;
+    delete updates.customerId;
+    delete updates.item;
+    delete updates.customer;
+
     Object.assign(rental, updates);
+
+    // If item was changed to a different item, update availability of old and new item
+    if (newItem && oldItemDoc && String(newItem._id) !== String(oldItemDoc._id)) {
+      try {
+        const otherOpenForOld = await Rental.findOne({
+          _id: { $ne: rental._id },
+          item: oldItemDoc._id,
+          status: { $in: [RentalStatus.ACTIVE, RentalStatus.UPCOMING, RentalStatus.OVERDUE] },
+        });
+        if (!otherOpenForOld) {
+          await Item.findByIdAndUpdate(oldItemDoc._id, { status: ItemStatus.AVAILABLE });
+        }
+        if ([RentalStatus.ACTIVE, RentalStatus.OVERDUE].includes(rental.status)) {
+          await Item.findByIdAndUpdate(newItem._id, { status: ItemStatus.RENTED });
+        } else if (rental.status === RentalStatus.UPCOMING) {
+          await Item.findByIdAndUpdate(newItem._id, { status: ItemStatus.RESERVED });
+        }
+      } catch (err) {
+        console.error('[rentals] error updating item statuses on item change', err);
+      }
+    }
 
     // If an employee marked dryclean completed, set item status to CLEANING
     if (updates.drycleanCompleted === true && rental.item) {
       try {
-        rental.item.status = ItemStatus.CLEANING;
-        await rental.item.save();
+        await Item.findByIdAndUpdate(rental.item, { status: ItemStatus.CLEANING });
       } catch (err) {
         console.error('[rentals] failed to set item status to CLEANING', err);
       }
@@ -277,8 +345,7 @@ exports.updateRental = async (req, res) => {
     // If admin confirmed dryclean, mark item available
     if (updates.drycleanAdminConfirmed === true && rental.item) {
       try {
-        rental.item.status = ItemStatus.AVAILABLE;
-        await rental.item.save();
+        await Item.findByIdAndUpdate(rental.item, { status: ItemStatus.AVAILABLE });
       } catch (err) {
         console.error('[rentals] failed to set item status to AVAILABLE after dryclean confirm', err);
       }
@@ -293,27 +360,33 @@ exports.updateRental = async (req, res) => {
     }
 
     if (updates.status && updates.status !== oldStatus && rental.item) {
-      if ([RentalStatus.ACTIVE, RentalStatus.OVERDUE].includes(updates.status)) {
-        rental.item.status = ItemStatus.RENTED;
-      } else if (updates.status === RentalStatus.UPCOMING) {
-        rental.item.status = ItemStatus.RESERVED;
-      } else if (updates.status === RentalStatus.RETURNED) {
-        const otherOpenRental = await Rental.findOne({
-          _id: { $ne: rental._id },
-          item: rental.item._id,
-          status: { $in: [RentalStatus.ACTIVE, RentalStatus.OVERDUE, RentalStatus.UPCOMING] },
-        }).sort({ createdAt: -1 });
+      try {
+        const itemToUpdate = await Item.findById(rental.item);
+        if (itemToUpdate) {
+          if ([RentalStatus.ACTIVE, RentalStatus.OVERDUE].includes(updates.status)) {
+            itemToUpdate.status = ItemStatus.RENTED;
+          } else if (updates.status === RentalStatus.UPCOMING) {
+            itemToUpdate.status = ItemStatus.RESERVED;
+          } else if (updates.status === RentalStatus.RETURNED) {
+            const otherOpenRental = await Rental.findOne({
+              _id: { $ne: rental._id },
+              item: itemToUpdate._id,
+              status: { $in: [RentalStatus.ACTIVE, RentalStatus.OVERDUE, RentalStatus.UPCOMING] },
+            }).sort({ createdAt: -1 });
 
-        if (otherOpenRental?.status === RentalStatus.ACTIVE || otherOpenRental?.status === RentalStatus.OVERDUE) {
-          rental.item.status = ItemStatus.RENTED;
-        } else if (otherOpenRental?.status === RentalStatus.UPCOMING) {
-          rental.item.status = ItemStatus.RESERVED;
-        } else {
-          rental.item.status = ItemStatus.AVAILABLE;
+            if (otherOpenRental?.status === RentalStatus.ACTIVE || otherOpenRental?.status === RentalStatus.OVERDUE) {
+              itemToUpdate.status = ItemStatus.RENTED;
+            } else if (otherOpenRental?.status === RentalStatus.UPCOMING) {
+              itemToUpdate.status = ItemStatus.RESERVED;
+            } else {
+              itemToUpdate.status = ItemStatus.AVAILABLE;
+            }
+          }
+          await itemToUpdate.save();
         }
+      } catch (err) {
+        console.error('[rentals] failed to update item status on rental status change', err);
       }
-
-      await rental.item.save();
     }
 
     await rental.save();
