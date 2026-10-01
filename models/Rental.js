@@ -12,7 +12,11 @@ const rentalSchema = new mongoose.Schema({
   billNo: { type: String, default: '' },
   address: { type: String, default: '' },
   deliveryDate: { type: Date, default: null },
+  deliveryTime: { type: String, default: '' },
   deliveryTimePeriod: { type: String, enum: ['Morning', 'Afternoon', 'Evening', 'Night', ''], default: '' },
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: true },
+  endTime: { type: String, default: '' },
   endTimePeriod: { type: String, enum: ['Morning', 'Afternoon', 'Evening', 'Night', ''], default: '' },
   rate: { type: Number, default: 0, min: 0 },
   quantity: { type: Number, default: 1, min: 0 },
@@ -39,14 +43,16 @@ const rentalSchema = new mongoose.Schema({
   securityReturnedAt: { type: Date, default: null },
   signature: { type: String, default: '' },
   returnedAt: { type: Date, default: null },
-  startDate: { type: Date, required: true },
-  endDate: { type: Date, required: true },
   total: { type: Number, required: true, min: 0 },
   status: { 
     type: String, 
     enum: Object.values(RentalStatus),
     default: RentalStatus.UPCOMING 
   },
+  ownerNumber: { type: String, default: '' },
+  instaId: { type: String, default: '' },
+  billMakingDate: { type: Date, default: null },
+  confirmationChecked: { type: Boolean, default: false },
   branch: { type: String, default: 'Shop 1', index: true }
 }, {
   timestamps: true

@@ -49,10 +49,12 @@ exports.createRental = async (req, res) => {
       address,
       itemNo,
       deliveryDate,
-      deliveryTimePeriod,
-      endTimePeriod,
+      deliveryTime = '',
+      deliveryTimePeriod = '',
       startDate,
       endDate,
+      endTime = '',
+      endTimePeriod = '',
       rate = 0,
       quantity = 1,
       lostQuantity = 0,
@@ -66,6 +68,10 @@ exports.createRental = async (req, res) => {
       signature = '',
       total,
       status,
+      ownerNumber = '',
+      instaId = '',
+      billMakingDate = null,
+      confirmationChecked = false,
       branch = 'Shop 1',
     } = req.body;
 
@@ -80,12 +86,28 @@ exports.createRental = async (req, res) => {
     }
 
     // Validate references
-    const item = await Item.findOne({ customId: itemId });
+    let item = null;
+    const itemCode = (itemNo || itemId || '').toString().trim();
+    if (itemCode) {
+      item = await Item.findOne({ customId: new RegExp(`^${itemCode}$`, 'i') });
+      if (!item && mongoose.Types.ObjectId.isValid(itemCode)) {
+        item = await Item.findById(itemCode);
+      }
+      if (!item) {
+        item = await Item.findOne({ barcode: itemCode });
+      }
+    }
+    if (!item && itemId) {
+      item = await Item.findOne({ customId: itemId });
+      if (!item && mongoose.Types.ObjectId.isValid(itemId)) {
+        item = await Item.findById(itemId);
+      }
+    }
     if (!item) {
-      return res.status(404).json({ error: `Item "${itemId}" is not present in inventory. Cannot make bill.` });
+      return res.status(404).json({ error: `Item "${itemNo || itemId}" is not present in inventory. Cannot make bill.` });
     }
 
-    const customer = await Customer.findOne({ customId: customerId });
+    const customer = await Customer.findOne({ customId: customerId }) || (mongoose.Types.ObjectId.isValid(customerId) ? await Customer.findById(customerId) : null);
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
     // Validate that item is not already booked for overlapping dates (unless Safa with stock)
@@ -114,9 +136,13 @@ exports.createRental = async (req, res) => {
       customer: customer._id,
       billNo,
       address,
-      itemNo: itemNo || item.customId,
+      itemNo: item.customId || itemNo,
       deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
+      deliveryTime: deliveryTime || '',
       deliveryTimePeriod: deliveryTimePeriod || '',
+      startDate: new Date(startDate || deliveryDate),
+      endDate: new Date(endDate),
+      endTime: endTime || '',
       endTimePeriod: endTimePeriod || '',
       rate: Number(rate) || Number(total) || 0,
       quantity: Math.max(0, Number(quantity) || 1),
@@ -129,10 +155,12 @@ exports.createRental = async (req, res) => {
       securityReturned: Boolean(securityReturned),
       securityReturnedAt: securityReturnedAt ? new Date(securityReturnedAt) : null,
       signature,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
       total: Number(total) || 0,
       status: normalizedStatus,
+      ownerNumber: ownerNumber || '',
+      instaId: instaId || '',
+      billMakingDate: billMakingDate ? new Date(billMakingDate) : null,
+      confirmationChecked: Boolean(confirmationChecked),
     });
     await rental.save();
 
@@ -265,31 +293,50 @@ exports.updateRental = async (req, res) => {
     const oldPenalty = rental.penalty || 0;
     const oldItemDoc = rental.item;
 
+    // Date normalization
+    if (updates.deliveryDate === '' || updates.deliveryDate === null) {
+      updates.deliveryDate = null;
+    } else if (updates.deliveryDate) {
+      updates.deliveryDate = new Date(updates.deliveryDate);
+    }
+    if (updates.startDate) {
+      updates.startDate = new Date(updates.startDate);
+    }
+    if (updates.endDate) {
+      updates.endDate = new Date(updates.endDate);
+    }
+    if (updates.billMakingDate === '' || updates.billMakingDate === null) {
+      updates.billMakingDate = null;
+    } else if (updates.billMakingDate) {
+      updates.billMakingDate = new Date(updates.billMakingDate);
+    }
+
     // Resolve Item reference when itemId or itemNo is updated
     let newItem = null;
-    const rawItemCode = (updates.itemId || updates.itemNo || '').toString().trim();
-    if (rawItemCode) {
-      newItem = await Item.findOne({ customId: new RegExp(`^${rawItemCode}$`, 'i') });
-      if (!newItem && mongoose.Types.ObjectId.isValid(rawItemCode)) {
-        newItem = await Item.findById(rawItemCode);
+    const itemNoCode = updates.itemNo ? String(updates.itemNo).trim() : '';
+    const itemIdCode = updates.itemId ? String(updates.itemId).trim() : '';
+
+    if (itemNoCode) {
+      newItem = await Item.findOne({ customId: new RegExp(`^${itemNoCode}$`, 'i') });
+      if (!newItem && mongoose.Types.ObjectId.isValid(itemNoCode)) {
+        newItem = await Item.findById(itemNoCode);
       }
       if (!newItem) {
-        newItem = await Item.findOne({ barcode: rawItemCode });
+        newItem = await Item.findOne({ barcode: itemNoCode });
       }
-      if (!newItem && updates.itemNo) {
-        const altCode = String(updates.itemNo).trim();
-        newItem = await Item.findOne({ customId: new RegExp(`^${altCode}$`, 'i') });
-        if (!newItem && mongoose.Types.ObjectId.isValid(altCode)) {
-          newItem = await Item.findById(altCode);
-        }
+    }
+    if (!newItem && itemIdCode) {
+      newItem = await Item.findOne({ customId: new RegExp(`^${itemIdCode}$`, 'i') });
+      if (!newItem && mongoose.Types.ObjectId.isValid(itemIdCode)) {
+        newItem = await Item.findById(itemIdCode);
       }
     }
 
     if (newItem) {
       rental.item = newItem._id;
-      rental.itemNo = updates.itemNo || newItem.customId;
-    } else if (updates.itemNo) {
-      rental.itemNo = updates.itemNo;
+      rental.itemNo = newItem.customId || updates.itemNo;
+    } else if (itemNoCode || itemIdCode) {
+      return res.status(404).json({ error: `Item "${itemNoCode || itemIdCode}" is not present in inventory. Cannot update rental.` });
     }
 
     // Resolve Customer reference when customerId is updated
