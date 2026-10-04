@@ -1,7 +1,7 @@
+const mongoose = require('mongoose');
 const Item = require('../models/Item');
 const { ItemStatus } = require('../types');
 const XLSX = require('xlsx');
-
 
 let itemsCache = null;
 let itemsCacheTime = 0;
@@ -12,6 +12,20 @@ function invalidateItemsCache() {
   itemsCacheTime = 0;
 }
 exports.invalidateItemsCache = invalidateItemsCache;
+
+function buildItemIdentifierQuery(identifier) {
+  const str = String(identifier || '').trim();
+  if (!str) return null;
+  if (mongoose.Types.ObjectId.isValid(str)) {
+    return {
+      $or: [
+        { customId: new RegExp(`^${str}$`, 'i') },
+        { _id: new mongoose.Types.ObjectId(str) },
+      ],
+    };
+  }
+  return { customId: new RegExp(`^${str}$`, 'i') };
+}
 
 // GET /api/items - list all or filter by status & branch
 exports.getItems = async (req, res) => {
@@ -47,7 +61,9 @@ exports.getItems = async (req, res) => {
 // GET /api/items/:id
 exports.getItem = async (req, res) => {
   try {
-    const item = await Item.findOne({ customId: req.params.id }).lean();
+    const query = buildItemIdentifierQuery(req.params.id);
+    if (!query) return res.status(404).json({ error: 'Item not found' });
+    const item = await Item.findOne(query).lean();
     if (!item) return res.status(404).json({ error: 'Item not found' });
     res.json(item);
   } catch (err) {
@@ -73,9 +89,11 @@ exports.createItem = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const updateData = { ...req.body };
-    // Base64 image is stored as-is in the database (no file system)
+    const query = buildItemIdentifierQuery(req.params.id);
+    if (!query) return res.status(404).json({ error: 'Item not found' });
+    
     const item = await Item.findOneAndUpdate(
-      { customId: req.params.id },
+      query,
       updateData,
       { new: true }
     );
@@ -90,7 +108,9 @@ exports.updateItem = async (req, res) => {
 // DELETE /api/items/:id
 exports.deleteItem = async (req, res) => {
   try {
-    const item = await Item.findOneAndDelete({ customId: req.params.id });
+    const query = buildItemIdentifierQuery(req.params.id);
+    if (!query) return res.status(404).json({ error: 'Item not found' });
+    const item = await Item.findOneAndDelete(query);
     if (!item) return res.status(404).json({ error: 'Item not found' });
     invalidateItemsCache();
     res.json({ message: 'Item deleted' });

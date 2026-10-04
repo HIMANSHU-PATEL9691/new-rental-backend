@@ -51,7 +51,7 @@ const rentalSchema = new mongoose.Schema({
   },
   ownerNumber: { type: String, default: '' },
   instaId: { type: String, default: '' },
-  billMakingDate: { type: Date, default: null },
+  billMakingDate: { type: Date, default: Date.now },
   confirmationChecked: { type: Boolean, default: false },
   branch: { type: String, default: 'Shop 1', index: true }
 }, {

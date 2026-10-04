@@ -3,6 +3,7 @@ const Rental = require('../models/Rental');
 const Item = require('../models/Item');
 const Customer = require('../models/Customer');
 const { RentalStatus, ItemStatus } = require('../types');
+const { invalidateItemsCache } = require('./itemController');
 
 // GET /api/rentals
 exports.getRentals = async (req, res) => {
@@ -38,6 +39,59 @@ exports.getRental = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+function parseDateTimeHelper(dateVal, timeStr, defaultHour = 0, defaultMin = 0) {
+  if (!dateVal) return NaN;
+  let year, month, day;
+
+  if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateVal)) {
+    const [y, m, d] = dateVal.slice(0, 10).split('-').map(Number);
+    year = y;
+    month = m - 1;
+    day = d;
+  } else if (typeof dateVal === 'string' && /^\d{2}\/\d{2}\/\d{4}/.test(dateVal)) {
+    const [d, m, y] = dateVal.slice(0, 10).split('/').map(Number);
+    year = y;
+    month = m - 1;
+    day = d;
+  } else {
+    const dObj = new Date(dateVal);
+    if (isNaN(dObj.getTime())) return NaN;
+    year = dObj.getFullYear();
+    month = dObj.getMonth();
+    day = dObj.getDate();
+  }
+
+  let hours = defaultHour;
+  let minutes = defaultMin;
+
+  if (timeStr && typeof timeStr === 'string' && timeStr.trim()) {
+    const cleanTime = timeStr.trim().toLowerCase();
+    const isPM = cleanTime.includes('pm');
+    const isAM = cleanTime.includes('am');
+    const digitsOnly = cleanTime.replace(/[^0-9:]/g, '');
+    const timeParts = digitsOnly.split(':');
+    if (timeParts.length >= 2) {
+      let h = parseInt(timeParts[0], 10);
+      let m = parseInt(timeParts[1], 10);
+      if (!isNaN(h) && !isNaN(m)) {
+        if (isPM && h < 12) h += 12;
+        if (isAM && h === 12) h = 0;
+        hours = h;
+        minutes = m;
+      }
+    } else if (timeParts.length === 1 && timeParts[0]) {
+      let h = parseInt(timeParts[0], 10);
+      if (!isNaN(h)) {
+        if (isPM && h < 12) h += 12;
+        if (isAM && h === 12) h = 0;
+        hours = h;
+      }
+    }
+  }
+
+  return new Date(year, month, day, hours, minutes, 0, 0).getTime();
+}
 
 // POST /api/rentals - complex: compute total, update item/customer
 exports.createRental = async (req, res) => {
@@ -110,22 +164,27 @@ exports.createRental = async (req, res) => {
     const customer = await Customer.findOne({ customId: customerId }) || (mongoose.Types.ObjectId.isValid(customerId) ? await Customer.findById(customerId) : null);
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    // Validate that item is not already booked for overlapping dates (unless Safa with stock)
+    // Validate that item is not already booked for overlapping dates & times (unless Safa with stock)
     const isSafa = [item.name, item.category, item.subcategory].filter(Boolean).join(' ').toLowerCase().includes('safa');
     if (!isSafa) {
-      const rentalStart = new Date(deliveryDate || startDate);
-      const rentalEnd = new Date(endDate);
-      const overlap = await Rental.findOne({
+      const newStartMs = parseDateTimeHelper(deliveryDate || startDate, deliveryTime, 0, 0);
+      const newEndMs = parseDateTimeHelper(endDate, endTime, 23, 59);
+
+      const existingRentals = await Rental.find({
         item: item._id,
         status: { $in: [RentalStatus.ACTIVE, RentalStatus.UPCOMING, RentalStatus.OVERDUE] },
-        $or: [
-          { startDate: { $lte: rentalEnd }, endDate: { $gte: rentalStart } },
-          { deliveryDate: { $lte: rentalEnd }, endDate: { $gte: rentalStart } },
-        ],
       });
-      if (overlap) {
+
+      const hasOverlap = existingRentals.some((r) => {
+        const rStartMs = parseDateTimeHelper(r.startDate || r.deliveryDate, r.deliveryTime, 0, 0);
+        const rEndMs = parseDateTimeHelper(r.endDate, r.endTime, 23, 59);
+        if (isNaN(newStartMs) || isNaN(newEndMs) || isNaN(rStartMs) || isNaN(rEndMs)) return false;
+        return newStartMs < rEndMs && newEndMs > rStartMs;
+      });
+
+      if (hasOverlap) {
         return res.status(400).json({
-          error: `Item "${item.name}" is already booked for the selected dates.`,
+          error: `Item "${item.name}" is already booked for the selected dates and time.`,
         });
       }
     }
@@ -159,7 +218,7 @@ exports.createRental = async (req, res) => {
       status: normalizedStatus,
       ownerNumber: ownerNumber || '',
       instaId: instaId || '',
-      billMakingDate: billMakingDate ? new Date(billMakingDate) : null,
+      billMakingDate: billMakingDate ? new Date(billMakingDate) : new Date(),
       confirmationChecked: Boolean(confirmationChecked),
     });
     await rental.save();
@@ -169,6 +228,7 @@ exports.createRental = async (req, res) => {
     if (normalizedStatus === RentalStatus.ACTIVE) item.status = ItemStatus.RENTED;
     else if (normalizedStatus === RentalStatus.UPCOMING) item.status = ItemStatus.RESERVED;
     await item.save();
+    invalidateItemsCache();
 
     // Update customer
     customer.rentals += 1;
@@ -380,8 +440,9 @@ exports.updateRental = async (req, res) => {
       }
     }
 
-    // If an employee marked dryclean completed, set item status to CLEANING
-    if (updates.drycleanCompleted === true && rental.item) {
+    // If an employee marked dryclean completed, set item status to CLEANING only if rental is not returned
+    const effectiveRentalStatus = updates.status || rental.status;
+    if (updates.drycleanCompleted === true && rental.item && effectiveRentalStatus !== RentalStatus.RETURNED) {
       try {
         await Item.findByIdAndUpdate(rental.item, { status: ItemStatus.CLEANING });
       } catch (err) {
@@ -406,15 +467,16 @@ exports.updateRental = async (req, res) => {
       }
     }
 
-    if (updates.status && updates.status !== oldStatus && rental.item) {
+    if (rental.item && (updates.status || effectiveRentalStatus === RentalStatus.RETURNED)) {
       try {
         const itemToUpdate = await Item.findById(rental.item);
         if (itemToUpdate) {
-          if ([RentalStatus.ACTIVE, RentalStatus.OVERDUE].includes(updates.status)) {
+          const currentStatusToCheck = updates.status || rental.status;
+          if ([RentalStatus.ACTIVE, RentalStatus.OVERDUE].includes(currentStatusToCheck)) {
             itemToUpdate.status = ItemStatus.RENTED;
-          } else if (updates.status === RentalStatus.UPCOMING) {
+          } else if (currentStatusToCheck === RentalStatus.UPCOMING) {
             itemToUpdate.status = ItemStatus.RESERVED;
-          } else if (updates.status === RentalStatus.RETURNED) {
+          } else if (currentStatusToCheck === RentalStatus.RETURNED) {
             const otherOpenRental = await Rental.findOne({
               _id: { $ne: rental._id },
               item: itemToUpdate._id,
@@ -437,9 +499,12 @@ exports.updateRental = async (req, res) => {
     }
 
     await rental.save();
+    invalidateItemsCache();
     const populatedRental = await Rental.findById(rental._id).populate('item customer');
+    console.info('[rentals] update successful', { id: rental._id, billNo: rental.billNo, status: rental.status });
     res.json(populatedRental);
   } catch (err) {
+    console.error('[rentals] update error', { id: req.params.id, error: err.message });
     res.status(400).json({ error: err.message });
   }
 };
@@ -477,6 +542,7 @@ exports.deleteRental = async (req, res) => {
     }
     
     await Rental.findOneAndDelete({ customId: req.params.id });
+    invalidateItemsCache();
     res.json({ message: 'Rental deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
