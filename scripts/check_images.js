@@ -4,14 +4,17 @@ const Item = require('../models/Item');
 
 mongoose.connect(process.env.MONGODB_URI).then(async () => {
   const total = await Item.countDocuments();
+  const cloudinaryCount = await Item.countDocuments({ image: { $regex: 'cloudinary' } });
   const base64Count = await Item.countDocuments({ image: { $regex: '^data:image/' } });
   const filePathCount = await Item.countDocuments({ image: { $regex: '^/uploads/' } });
   const emptyCount = await Item.countDocuments({ image: '' });
 
   console.log('Total items:', total);
-  console.log('Already base64 in DB:', base64Count);
-  console.log('Still file-path in DB:', filePathCount);
+  console.log('Cloudinary URLs in DB:', cloudinaryCount);
+  console.log('Base64 in DB:', base64Count);
+  console.log('File-path in DB:', filePathCount);
   console.log('No image:', emptyCount);
+
 
   if (filePathCount > 0) {
     const samples = await Item.find({ image: { $regex: '^/uploads/' } }).limit(3).select('customId image');

@@ -131,13 +131,13 @@ async function migrateBranchData() {
   }
 }
 
-// Migrate existing file-path images (/uploads/items/xxx.jpg) to base64 in MongoDB.
-// This runs once on server start to move images from filesystem to database.
-async function migrateFilesToBase64() {
+const { uploadToCloudinary } = require('./utils/cloudinary');
+
+// Migrate existing file-path images (/uploads/items/xxx.jpg) to Cloudinary in MongoDB.
+async function migrateFilesToCloudinary() {
   try {
     const items = await Item.find({ image: { $regex: '^/uploads/items/' } });
     if (items.length === 0) {
-      console.log('[DB] No file-path images to migrate.');
       return;
     }
     let migrated = 0;
@@ -145,25 +145,25 @@ async function migrateFilesToBase64() {
       try {
         const filePath = path.join(__dirname, item.image);
         if (!fs.existsSync(filePath)) {
-          console.warn(`[DB] Image file not found, skipping: ${filePath}`);
           continue;
         }
         const buffer = fs.readFileSync(filePath);
-        const ext = path.extname(item.image).replace('.', '').toLowerCase();
-        const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-        const base64 = buffer.toString('base64');
-        item.image = `data:${mimeType};base64,${base64}`;
+        const cloudinaryUrl = await uploadToCloudinary(buffer, 'rental_items');
+        item.image = cloudinaryUrl;
         await item.save();
         migrated++;
       } catch (fileErr) {
         console.error(`[DB] Failed to migrate image for item ${item.customId}:`, fileErr.message);
       }
     }
-    console.log(`[DB] Migrated ${migrated}/${items.length} file-path images to base64 in MongoDB.`);
+    if (migrated > 0) {
+      console.log(`[DB] Migrated ${migrated} disk images to Cloudinary.`);
+    }
   } catch (err) {
     console.error('[DB] Image migration error:', err.message);
   }
 }
+
 
 if (!process.env.MONGODB_URI) {
   dbReady = false;
@@ -176,7 +176,7 @@ if (!process.env.MONGODB_URI) {
       dbError = null;
       console.log('Connected to MongoDB Atlas');
       migrateBranchData();
-      migrateFilesToBase64();
+      migrateFilesToCloudinary();
     })
     .catch((err) => {
       dbReady = false;

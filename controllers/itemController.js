@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Item = require('../models/Item');
 const { ItemStatus } = require('../types');
 const XLSX = require('xlsx');
+const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary');
 
 let itemsCache = null;
 let itemsCacheTime = 0;
@@ -71,11 +72,45 @@ exports.getItem = async (req, res) => {
   }
 };
 
-// POST /api/items — image (base64 data URI) stored directly in MongoDB
+// POST /api/items — ensures image is uploaded to Cloudinary before saving URL to MongoDB
 exports.createItem = async (req, res) => {
   try {
     const itemData = { ...req.body };
-    // Base64 image is stored as-is in the database (no file system)
+
+    // Handle primary image
+    if (typeof itemData.image === 'string' && itemData.image.startsWith('data:image/')) {
+      try {
+        itemData.image = await uploadToCloudinary(itemData.image, 'rental_items');
+      } catch (cloudErr) {
+        console.error('[Cloudinary] createItem main image upload error:', cloudErr.message);
+      }
+    }
+
+    // Handle gallery images
+    if (Array.isArray(itemData.images) && itemData.images.length > 0) {
+      itemData.images = await Promise.all(
+        itemData.images.map(async (img, idx) => {
+          if (idx === 0 && itemData.image && !itemData.image.startsWith('data:image/')) {
+            return itemData.image;
+          }
+          if (typeof img === 'string' && img.startsWith('data:image/')) {
+            try {
+              return await uploadToCloudinary(img, 'rental_items');
+            } catch (err) {
+              console.error('[Cloudinary] createItem gallery image upload error:', err.message);
+              return img;
+            }
+          }
+          return img;
+        })
+      );
+      if (!itemData.image && itemData.images[0]) {
+        itemData.image = itemData.images[0];
+      }
+    } else if (itemData.image) {
+      itemData.images = [itemData.image];
+    }
+
     const item = new Item(itemData);
     await item.save();
     invalidateItemsCache();
@@ -85,12 +120,62 @@ exports.createItem = async (req, res) => {
   }
 };
 
-// PATCH /api/items/:id — image (base64 data URI) updated directly in MongoDB
+// PATCH /api/items/:id — ensures image is uploaded to Cloudinary and old replaced image is deleted
 exports.updateItem = async (req, res) => {
   try {
     const updateData = { ...req.body };
     const query = buildItemIdentifierQuery(req.params.id);
     if (!query) return res.status(404).json({ error: 'Item not found' });
+
+    const existingItem = await Item.findOne(query);
+    if (!existingItem) return res.status(404).json({ error: 'Item not found' });
+
+    // Handle updated primary image
+    if (typeof updateData.image === 'string' && updateData.image.startsWith('data:image/')) {
+      try {
+        updateData.image = await uploadToCloudinary(updateData.image, 'rental_items');
+      } catch (cloudErr) {
+        console.error('[Cloudinary] updateItem upload error:', cloudErr.message);
+      }
+    }
+
+    // If the main image was replaced with a new one, delete old Cloudinary image
+    if (updateData.image && existingItem.image && updateData.image !== existingItem.image) {
+      deleteFromCloudinary(existingItem.image).catch((e) =>
+        console.warn('[Cloudinary] old image delete error:', e.message)
+      );
+    }
+
+    // Handle gallery images
+    if (Array.isArray(updateData.images)) {
+      updateData.images = await Promise.all(
+        updateData.images.map(async (img, idx) => {
+          if (idx === 0 && updateData.image && !updateData.image.startsWith('data:image/')) {
+            return updateData.image;
+          }
+          if (typeof img === 'string' && img.startsWith('data:image/')) {
+            try {
+              return await uploadToCloudinary(img, 'rental_items');
+            } catch (err) {
+              console.error('[Cloudinary] updateItem gallery image upload error:', err.message);
+              return img;
+            }
+          }
+          return img;
+        })
+      );
+
+      // Delete removed images from Cloudinary
+      if (Array.isArray(existingItem.images)) {
+        for (const oldImg of existingItem.images) {
+          if (oldImg && !updateData.images.includes(oldImg) && oldImg !== updateData.image) {
+            deleteFromCloudinary(oldImg).catch((e) =>
+              console.warn('[Cloudinary] removed image delete error:', e.message)
+            );
+          }
+        }
+      }
+    }
     
     const item = await Item.findOneAndUpdate(
       query,
@@ -105,15 +190,33 @@ exports.updateItem = async (req, res) => {
   }
 };
 
-// DELETE /api/items/:id
+
+// DELETE /api/items/:id — deletes item and its associated Cloudinary images
 exports.deleteItem = async (req, res) => {
   try {
     const query = buildItemIdentifierQuery(req.params.id);
     if (!query) return res.status(404).json({ error: 'Item not found' });
     const item = await Item.findOneAndDelete(query);
     if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    // Delete image(s) from Cloudinary
+    if (item.image) {
+      deleteFromCloudinary(item.image).catch((e) =>
+        console.warn('[Cloudinary] deleteItem image error:', e.message)
+      );
+    }
+    if (Array.isArray(item.images)) {
+      for (const img of item.images) {
+        if (img && img !== item.image) {
+          deleteFromCloudinary(img).catch((e) =>
+            console.warn('[Cloudinary] deleteItem gallery image error:', e.message)
+          );
+        }
+      }
+    }
+
     invalidateItemsCache();
-    res.json({ message: 'Item deleted' });
+    res.json({ message: 'Item and associated images deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -202,22 +305,27 @@ exports.uploadExcel = async (req, res) => {
 };
 
 // POST /api/items/upload-image
-// Converts uploaded file to base64 data URI and returns it.
-// No file is written to disk — the frontend sends this base64 back when saving the item,
-// and it is stored directly in MongoDB.
+// Uploads image to Cloudinary and returns secure HTTPS URL.
+// Falls back to base64 data URI if Cloudinary upload fails.
 exports.uploadImage = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file uploaded' });
     }
 
-    const mimeType = req.file.mimetype || 'image/jpeg';
-    const base64 = req.file.buffer.toString('base64');
-    const dataUri = `data:${mimeType};base64,${base64}`;
-
-    res.status(200).json({ url: dataUri });
+    try {
+      const cloudinaryUrl = await uploadToCloudinary(req.file.buffer, 'rental_items');
+      return res.status(200).json({ url: cloudinaryUrl });
+    } catch (cloudErr) {
+      console.warn('[Cloudinary] Upload failed, falling back to base64:', cloudErr.message);
+      const mimeType = req.file.mimetype || 'image/jpeg';
+      const base64 = req.file.buffer.toString('base64');
+      const dataUri = `data:${mimeType};base64,${base64}`;
+      return res.status(200).json({ url: dataUri });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 

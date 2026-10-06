@@ -4,6 +4,7 @@ const Item = require('../models/Item');
 const Customer = require('../models/Customer');
 const { RentalStatus, ItemStatus } = require('../types');
 const { invalidateItemsCache } = require('./itemController');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 // GET /api/rentals
 exports.getRentals = async (req, res) => {
@@ -189,39 +190,49 @@ exports.createRental = async (req, res) => {
       }
     }
 
-    const rental = new Rental({
-      branch: branch || 'Shop 1',
-      item: item._id,
-      customer: customer._id,
-      billNo,
-      address,
-      itemNo: item.customId || itemNo,
-      deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
-      deliveryTime: deliveryTime || '',
-      deliveryTimePeriod: deliveryTimePeriod || '',
-      startDate: new Date(startDate || deliveryDate),
-      endDate: new Date(endDate),
-      endTime: endTime || '',
-      endTimePeriod: endTimePeriod || '',
-      rate: Number(rate) || Number(total) || 0,
-      quantity: Math.max(0, Number(quantity) || 1),
-      lostQuantity: Math.max(0, Number(lostQuantity) || 0),
-      discount: Number(discount) || 0,
-      penalty: Number(penalty) || 0,
-      remark,
-      advance: Number(advance) || 0,
-      securityAmount: Number(securityAmount) || 0,
-      securityReturned: Boolean(securityReturned),
-      securityReturnedAt: securityReturnedAt ? new Date(securityReturnedAt) : null,
-      signature,
-      total: Number(total) || 0,
-      status: normalizedStatus,
-      ownerNumber: ownerNumber || '',
-      instaId: instaId || '',
-      billMakingDate: billMakingDate ? new Date(billMakingDate) : new Date(),
-      confirmationChecked: Boolean(confirmationChecked),
-    });
-    await rental.save();
+      let finalSignature = signature || '';
+      if (typeof finalSignature === 'string' && finalSignature.startsWith('data:image/')) {
+        try {
+          finalSignature = await uploadToCloudinary(finalSignature, 'rental_signatures');
+        } catch (err) {
+          console.warn('[Cloudinary] signature upload error:', err.message);
+        }
+      }
+
+      const rental = new Rental({
+        branch: branch || 'Shop 1',
+        item: item._id,
+        customer: customer._id,
+        billNo,
+        address,
+        itemNo: item.customId || itemNo,
+        deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
+        deliveryTime: deliveryTime || '',
+        deliveryTimePeriod: deliveryTimePeriod || '',
+        startDate: new Date(startDate || deliveryDate),
+        endDate: new Date(endDate),
+        endTime: endTime || '',
+        endTimePeriod: endTimePeriod || '',
+        rate: Number(rate) || Number(total) || 0,
+        quantity: Math.max(0, Number(quantity) || 1),
+        lostQuantity: Math.max(0, Number(lostQuantity) || 0),
+        discount: Number(discount) || 0,
+        penalty: Number(penalty) || 0,
+        remark,
+        advance: Number(advance) || 0,
+        securityAmount: Number(securityAmount) || 0,
+        securityReturned: Boolean(securityReturned),
+        securityReturnedAt: securityReturnedAt ? new Date(securityReturnedAt) : null,
+        signature: finalSignature,
+        total: Number(total) || 0,
+        status: normalizedStatus,
+        ownerNumber: ownerNumber || '',
+        instaId: instaId || '',
+        billMakingDate: billMakingDate ? new Date(billMakingDate) : new Date(),
+        confirmationChecked: Boolean(confirmationChecked),
+      });
+      await rental.save();
+
 
     // Update item
     item.timesRented += 1;
@@ -295,6 +306,14 @@ exports.updateRental = async (req, res) => {
     }
     if (updates.returnedAt) {
       updates.returnedAt = new Date(updates.returnedAt);
+    }
+
+    if (typeof updates.signature === 'string' && updates.signature.startsWith('data:image/')) {
+      try {
+        updates.signature = await uploadToCloudinary(updates.signature, 'rental_signatures');
+      } catch (err) {
+        console.warn('[Cloudinary] signature update upload error:', err.message);
+      }
     }
 
     console.info('[rentals] update request', {
@@ -541,9 +560,16 @@ exports.deleteRental = async (req, res) => {
       await rental.customer.save();
     }
     
+    if (rental.signature) {
+      deleteFromCloudinary(rental.signature).catch((e) =>
+        console.warn('[Cloudinary] deleteRental signature error:', e.message)
+      );
+    }
+    
     await Rental.findOneAndDelete({ customId: req.params.id });
     invalidateItemsCache();
     res.json({ message: 'Rental deleted' });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
