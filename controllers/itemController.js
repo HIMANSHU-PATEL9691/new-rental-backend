@@ -14,7 +14,7 @@ function invalidateItemsCache() {
 }
 exports.invalidateItemsCache = invalidateItemsCache;
 
-function buildItemIdentifierQuery(identifier) {
+function buildItemIdentifierQuery(identifier, branch) {
   const str = String(identifier || '').trim();
   if (!str) return null;
   if (mongoose.Types.ObjectId.isValid(str)) {
@@ -25,7 +25,15 @@ function buildItemIdentifierQuery(identifier) {
       ],
     };
   }
-  return { customId: new RegExp(`^${str}$`, 'i') };
+  const query = { customId: new RegExp(`^${str}$`, 'i') };
+  if (branch) {
+    if (branch === 'Shop 1') {
+      query.$or = [{ branch: 'Shop 1' }, { branch: { $exists: false } }, { branch: null }, { branch: '' }];
+    } else {
+      query.branch = branch;
+    }
+  }
+  return query;
 }
 
 // GET /api/items - list all or filter by status & branch
@@ -62,7 +70,8 @@ exports.getItems = async (req, res) => {
 // GET /api/items/:id
 exports.getItem = async (req, res) => {
   try {
-    const query = buildItemIdentifierQuery(req.params.id);
+    const branch = req.query.branch;
+    const query = buildItemIdentifierQuery(req.params.id, branch);
     if (!query) return res.status(404).json({ error: 'Item not found' });
     const item = await Item.findOne(query).lean();
     if (!item) return res.status(404).json({ error: 'Item not found' });
@@ -116,6 +125,14 @@ exports.createItem = async (req, res) => {
     invalidateItemsCache();
     res.status(201).json(item);
   } catch (err) {
+    if (err.code === 11000 || (err.message && err.message.includes('E11000'))) {
+      const branchName = req.body.branch || 'current shop';
+      const dupField = err.keyPattern ? Object.keys(err.keyPattern)[0] : 'Item No';
+      const dupVal = err.keyValue ? err.keyValue[dupField] : (req.body.customId || '');
+      return res.status(400).json({
+        error: `Item with ${dupField === 'customId' ? 'Item No' : dupField} "${dupVal}" already exists in ${branchName}. Please use a unique Item No for this shop.`
+      });
+    }
     res.status(400).json({ error: err.message });
   }
 };
@@ -124,7 +141,8 @@ exports.createItem = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const updateData = { ...req.body };
-    const query = buildItemIdentifierQuery(req.params.id);
+    const branch = req.query.branch || updateData.branch;
+    const query = buildItemIdentifierQuery(req.params.id, branch);
     if (!query) return res.status(404).json({ error: 'Item not found' });
 
     const existingItem = await Item.findOne(query);
@@ -186,6 +204,14 @@ exports.updateItem = async (req, res) => {
     invalidateItemsCache();
     res.json(item);
   } catch (err) {
+    if (err.code === 11000 || (err.message && err.message.includes('E11000'))) {
+      const branchName = req.body.branch || req.query.branch || 'current shop';
+      const dupField = err.keyPattern ? Object.keys(err.keyPattern)[0] : 'Item No';
+      const dupVal = err.keyValue ? err.keyValue[dupField] : (req.body.customId || '');
+      return res.status(400).json({
+        error: `Item with ${dupField === 'customId' ? 'Item No' : dupField} "${dupVal}" already exists in ${branchName}. Please use a unique Item No for this shop.`
+      });
+    }
     res.status(400).json({ error: err.message });
   }
 };
@@ -194,7 +220,8 @@ exports.updateItem = async (req, res) => {
 // DELETE /api/items/:id — deletes item and its associated Cloudinary images
 exports.deleteItem = async (req, res) => {
   try {
-    const query = buildItemIdentifierQuery(req.params.id);
+    const branch = req.query.branch;
+    const query = buildItemIdentifierQuery(req.params.id, branch);
     if (!query) return res.status(404).json({ error: 'Item not found' });
     const item = await Item.findOneAndDelete(query);
     if (!item) return res.status(404).json({ error: 'Item not found' });

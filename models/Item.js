@@ -3,7 +3,7 @@ const { getNextSequence, generateId } = require('../utils/counterModel');
 const { ItemStatus } = require('../types');
 
 const itemSchema = new mongoose.Schema({
-  customId: { type: String, required: true, unique: true },
+  customId: { type: String, required: true },
   name: { type: String, required: true, maxlength: 80 },
   designer: { type: String, required: true, maxlength: 60 },
   category: { type: String, required: true, maxlength: 20 },
@@ -27,6 +27,8 @@ const itemSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Compound unique index so customId (Item No) is unique PER BRANCH (Shop 1 & Shop 2 can both have L326)
+itemSchema.index({ customId: 1, branch: 1 }, { unique: true });
 itemSchema.index({ branch: 1, createdAt: -1 });
 
 itemSchema.pre('validate', async function(next) {

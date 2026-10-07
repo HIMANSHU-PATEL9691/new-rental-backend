@@ -165,18 +165,34 @@ async function migrateFilesToCloudinary() {
 }
 
 
+async function fixIndexes() {
+  try {
+    const indexes = await Item.collection.indexes();
+    const hasLegacyCustomIdIndex = indexes.some((idx) => idx.name === 'customId_1');
+    if (hasLegacyCustomIdIndex) {
+      await Item.collection.dropIndex('customId_1');
+      console.log('[DB] Dropped legacy global customId_1 index from items collection.');
+    }
+    await Item.syncIndexes();
+    console.log('[DB] Synced indexes for Item model (compound customId + branch index is active).');
+  } catch (err) {
+    console.warn('[DB] Index fix warning:', err.message);
+  }
+}
+
 if (!process.env.MONGODB_URI) {
   dbReady = false;
   dbError = 'MONGODB_URI is missing in .env file';
   console.error('[DB] ' + dbError);
 } else {
   mongoose.connect(process.env.MONGODB_URI)
-    .then(() => {
+    .then(async () => {
       dbReady = true;
       dbError = null;
       console.log('Connected to MongoDB Atlas');
-      migrateBranchData();
-      migrateFilesToCloudinary();
+      await migrateBranchData();
+      await fixIndexes();
+      await migrateFilesToCloudinary();
     })
     .catch((err) => {
       dbReady = false;
