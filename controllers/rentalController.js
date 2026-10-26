@@ -342,7 +342,7 @@ exports.updateRental = async (req, res) => {
       if (updates.drycleanCompleted === true && !updates.drycleanCompletedBy) {
         return res.status(400).json({ error: 'Employee name is required to mark dryclean as completed.' });
       }
-    } else if (userRole !== 'admin') {
+    } else if (userRole !== 'admin' && userRole !== 'reception') {
       return res.status(403).json({ error: 'Admin only' });
     }
 

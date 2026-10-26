@@ -89,8 +89,8 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials or account not found.' });
     }
 
-    // Check if staff tries to access a different shop than assigned
-    if (user.role !== 'admin' && branch && user.branch && branch !== user.branch) {
+    // Admin and Reception can access both shops! Only regular employees are restricted to their assigned shop.
+    if (!['admin', 'reception'].includes(user.role) && branch && user.branch && branch !== user.branch) {
       return res.status(403).json({
         error: 'Correct the shop name. You are not able to access the other shop.'
       });
@@ -112,7 +112,7 @@ exports.login = async (req, res) => {
       status: user.status,
       phone: user.phone,
       email: user.email,
-      branch: user.branch || branch || 'Shop 1',
+      branch: ['admin', 'reception'].includes(user.role) ? (branch || user.branch || 'Shop 1') : (user.branch || branch || 'Shop 1'),
     });
   } catch (err) {
     res.status(400).json({ error: err.message });

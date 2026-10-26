@@ -35,7 +35,7 @@ module.exports = function requireAdmin(req, res, next) {
       return next();
     }
 
-    if (role !== 'admin') {
+    if (!['admin', 'reception'].includes(role)) {
       return res.status(403).json({ error: 'Admin only' });
     }
 
